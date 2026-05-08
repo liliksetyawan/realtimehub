@@ -1,0 +1,447 @@
+{
+  "info": {
+    "_postman_id": "8a1b2c3d-4567-4890-abcd-ef0123456789",
+    "name": "RealtimeHub",
+    "description": "WebSocket fan-out for in-app notifications. Run `make up && make run` first, then walk folders 00 → 04 in order.\n\n**Bearer tokens are saved automatically** — fire \"Login as alice\" and \"Login as admin\" once at the top of folder `00 - Setup`, and every later request picks the right token up via the `{{token}}` and `{{admin_token}}` collection variables.\n\nThe **WebSocket** part has to be added manually inside Postman: click \"New → WebSocket Request\", paste `{{ws_url}}/ws?token={{token}}`, and connect. Each notification you send from folder `03 - Admin` will arrive on that socket as a JSON `notification` frame.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {"key": "token", "value": "{{token}}", "type": "string"}
+    ]
+  },
+  "item": [
+    {
+      "name": "00 - Setup (run these first)",
+      "item": [
+        {
+          "name": "Login as alice (saves token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('token', body.token);",
+                  "pm.collectionVariables.set('user_id', body.user_id);",
+                  "pm.collectionVariables.set('username', body.username);",
+                  "console.log('Saved alice token; user_id =', body.user_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"password123\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "auth", "login"]
+            },
+            "description": "Issues a JWT for the demo user `alice`. The test script saves the token to the collection variable `{{token}}` so every other authenticated request just works."
+          }
+        },
+        {
+          "name": "Login as admin (saves admin_token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('admin_token', body.token);",
+                  "console.log('Saved admin token');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"admin123\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "auth", "login"]
+            },
+            "description": "Issues a JWT for the `admin` role. Saved as `{{admin_token}}` and used by every request inside folder `03 - Admin`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 - Auth",
+      "item": [
+        {
+          "name": "Get me (verifies the cached token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns the right user', () => {",
+                  "    pm.expect(body.user_id).to.eql(pm.collectionVariables.get('user_id'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/me",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "me"]
+            },
+            "description": "The SPA calls /v1/me on boot to validate the token in localStorage. 401 means the cached token is invalid or expired."
+          }
+        },
+        {
+          "name": "Login - invalid credentials (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"wrong\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "auth", "login"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - User notifications (alice)",
+      "item": [
+        {
+          "name": "List my notifications",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns shape', () => {",
+                  "    pm.expect(body).to.have.property('data');",
+                  "    pm.expect(body).to.have.property('total');",
+                  "    pm.expect(body).to.have.property('unread_count');",
+                  "});",
+                  "if (body.data.length > 0) {",
+                  "    pm.collectionVariables.set('notification_id', body.data[0].id);",
+                  "    console.log('Saved notification_id for mark-read tests');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/notifications?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "notifications"],
+              "query": [
+                {"key": "limit", "value": "20"},
+                {"key": "offset", "value": "0", "disabled": true}
+              ]
+            },
+            "description": "Newest first. Saves the first id to `{{notification_id}}` for the mark-as-read request below."
+          }
+        },
+        {
+          "name": "List unread only",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/notifications?unread=true",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "notifications"],
+              "query": [{"key": "unread", "value": "true"}]
+            }
+          }
+        },
+        {
+          "name": "Mark notification as read",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 204 or 404', () => {",
+                  "    pm.expect([204, 404]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/notifications/{{notification_id}}/read",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "notifications", "{{notification_id}}", "read"]
+            },
+            "description": "Run \"List my notifications\" first to populate `{{notification_id}}`, then run this. 204 on success, 404 if already read or not yours."
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Admin",
+      "auth": {
+        "type": "bearer",
+        "bearer": [{"key": "token", "value": "{{admin_token}}", "type": "string"}]
+      },
+      "item": [
+        {
+          "name": "List demo users",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns users array', () => pm.expect(body.data).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/users",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "admin", "users"]
+            },
+            "description": "Used by the admin SPA to populate the recipient picker."
+          }
+        },
+        {
+          "name": "Send to alice (single recipient)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns sent array', () => {",
+                  "    pm.expect(body.sent).to.be.an('array').and.to.have.lengthOf(1);",
+                  "    pm.expect(body.sent[0].seq).to.be.greaterThan(0);",
+                  "});",
+                  "console.log('Sent to alice; seq =', body.sent[0].seq);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_ids\": [\"u_alice\"],\n  \"title\": \"Heads up\",\n  \"body\": \"Saga has just confirmed your order.\",\n  \"data\": { \"order_id\": \"abc-123\" }\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/admin/notifications",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "admin", "notifications"]
+            },
+            "description": "Persists to postgres + publishes to Redis. Any browser tab logged in as alice will receive a `notification` frame on its WebSocket within milliseconds."
+          }
+        },
+        {
+          "name": "Send to multiple recipients",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_ids\": [\"u_alice\", \"u_bob\", \"u_charlie\"],\n  \"title\": \"System maintenance tonight\",\n  \"body\": \"We'll be down 22:00 - 22:30 WIB for index migration.\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/admin/notifications",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "admin", "notifications"]
+            },
+            "description": "Each recipient gets their own row + their own seq. The publisher fans out per-user via Redis."
+          }
+        },
+        {
+          "name": "Send - forbidden as alice (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{"key": "token", "value": "{{token}}", "type": "string"}]
+            },
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_ids\": [\"u_alice\"],\n  \"title\": \"oops\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/admin/notifications",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "admin", "notifications"]
+            },
+            "description": "Sanity check — alice's token cannot reach an admin route. Demonstrates the RequireAdmin middleware."
+          }
+        },
+        {
+          "name": "Send - validation error (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_ids\": [],\n  \"title\": \"\"\n}",
+              "options": {"raw": {"language": "json"}}
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/admin/notifications",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "admin", "notifications"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Health",
+      "item": [
+        {
+          "name": "GET /healthz",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Returns connections count', () => {",
+                  "    pm.expect(body).to.have.property('status', 'ok');",
+                  "    pm.expect(body).to.have.property('connections');",
+                  "});",
+                  "console.log('live connections =', body.connections);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/healthz",
+              "host": ["{{base_url}}"],
+              "path": ["healthz"]
+            },
+            "description": "Exposes the live WebSocket connection count — used by the load test's watch loop:\n\n```bash\nwatch -n 1 'curl -s http://localhost:8090/healthz | jq .connections'\n```"
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - WebSocket (manual)",
+      "item": [
+        {
+          "name": "WS Connect — read me",
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ws_url}}/ws?token={{token}}",
+              "host": ["{{ws_url}}"],
+              "path": ["ws"],
+              "query": [{"key": "token", "value": "{{token}}"}]
+            },
+            "description": "Postman Collection v2.1 doesn't have a first-class WebSocket request type. To exercise the WS endpoint:\n\n1. In Postman, click **New → WebSocket Request**.\n2. Paste this URL (after running \"Login as alice\" so `{{token}}` is set):\n   `{{ws_url}}/ws?token={{token}}`\n3. Click **Connect**.\n4. You should immediately receive a `welcome` frame.\n5. Then run \"Send to alice\" in folder 03 — a `notification` frame arrives instantly on this socket.\n\nFrames you can send from the WS UI:\n```json\n{\"type\":\"ping\"}\n```\n```json\n{\"type\":\"resume\",\"payload\":{\"from_seq\":0}}\n```\n\nThis HTTP-shaped item exists only to host the documentation; running it returns 400 because it's a normal GET, not an upgrade."
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {"key": "base_url",     "value": "http://localhost:8090", "type": "string"},
+    {"key": "ws_url",       "value": "ws://localhost:8090",   "type": "string"},
+    {"key": "token",        "value": "",                       "type": "string"},
+    {"key": "admin_token",  "value": "",                       "type": "string"},
+    {"key": "user_id",      "value": "",                       "type": "string"},
+    {"key": "username",     "value": "",                       "type": "string"},
+    {"key": "notification_id", "value": "",                    "type": "string"}
+  ]
+}
