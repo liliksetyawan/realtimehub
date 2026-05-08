@@ -122,9 +122,13 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop drains in-flight connections and shuts down the engine.
+// Stop drains in-flight connections and shuts down the engine. The
+// shutdown error is logged rather than returned — the caller is the
+// composition root mid-shutdown, there's nothing useful it can do.
 func (s *Server) Stop(ctx context.Context) {
-	s.eng.Shutdown(ctx)
+	if err := s.eng.Shutdown(ctx); err != nil {
+		s.log.Warn().Err(err).Msg("nbio shutdown")
+	}
 }
 
 // handleUpgrade authenticates, upgrades, registers the connection, and
