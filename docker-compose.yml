@@ -1,0 +1,42 @@
+# Ports intentionally offset (5433/6380) so RealtimeHub can run alongside
+# OrderFlow on the same machine without colliding.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: realtimehub-postgres
+    environment:
+      POSTGRES_USER: realtimehub
+      POSTGRES_PASSWORD: realtimehub
+      POSTGRES_DB: realtimehub
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U realtimehub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: realtimehub-redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    container_name: realtimehub-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16687:16686"
+      - "4319:4318"
+
+volumes:
+  pg_data:

@@ -1,0 +1,29 @@
+# Binaries
+bin/
+*.exe
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Env
+.env
+.env.local
+
+# Coverage
+coverage.out
+coverage.html
+
+# Generated
+*.pb.go
+!proto/**/*.pb.go
+
+# Logs
+*.log
+
+# Load test output
+loadtest/results/
