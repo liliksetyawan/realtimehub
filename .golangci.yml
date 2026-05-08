@@ -26,6 +26,8 @@ linters:
 
   exclusions:
     generated: lax
+    paths:
+      - '/mocks/'
     rules:
       - path: '_test\.go$'
         linters: [errcheck]

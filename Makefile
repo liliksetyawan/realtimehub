@@ -31,6 +31,15 @@ redis-cli:
 tidy:
 	go mod tidy
 
+## mocks: regenerate gomock mocks for the port packages
+mocks:
+	go generate ./...
+
+## cover: run tests with race + coverage and print the summary
+cover:
+	go test -race -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out | tail -1
+
 ## build: build the server binary into bin/server
 build:
 	@mkdir -p bin
