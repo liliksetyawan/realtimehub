@@ -1,0 +1,37 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - unconvert
+    - bodyclose
+    - errorlint
+
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*github.com/jackc/pgx/v5.Tx).Rollback
+        - (github.com/jackc/pgx/v5.Tx).Rollback
+
+  exclusions:
+    generated: lax
+    rules:
+      - path: '_test\.go$'
+        linters: [errcheck]
+
+formatters:
+  enable: [gofmt, goimports]
+  settings:
+    goimports:
+      local-prefixes: [github.com/liliksetyawan/realtimehub]
