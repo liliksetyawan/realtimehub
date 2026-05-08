@@ -109,14 +109,17 @@ func (c *Connection) LastSeq() int64 { return c.lastSeq.Load() }
 func (c *Connection) SetLastSeq(s int64) { c.lastSeq.Store(s) }
 
 // Close idempotently shuts the connection down. Safe to call from any
-// goroutine; multiple calls are no-ops.
+// goroutine; multiple calls are no-ops. The wsConn nil-check exists so
+// unit tests can construct a Connection without a real upgraded socket.
 func (c *Connection) Close() {
 	if !c.closed.CompareAndSwap(false, true) {
 		return
 	}
 	close(c.out)
 	c.mu.Lock()
-	_ = c.wsConn.Close()
+	if c.wsConn != nil {
+		_ = c.wsConn.Close()
+	}
 	c.mu.Unlock()
 }
 
