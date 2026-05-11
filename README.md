@@ -40,7 +40,7 @@ flowchart LR
 
     Hub -->|"persist"| PG[(PostgreSQL<br/>notifications)]
     Pub["Redis publisher"] -->|"PUBLISH<br/>notif:user:&#42;"| Redis{{"Redis<br/>pub-sub"}}
-    Redis -->|"PSUBSCRIBE"| Sub
+    Redis -->|"SUBSCRIBE per user"| Sub
 
     WS -.->|"fan-out via"| Pub
 ```
@@ -103,7 +103,7 @@ sequenceDiagram
 | **Bounded write channel** | `connection.go` — buffer 64 per conn | Slow consumers get closed; the broadcaster never blocks |
 | **One-timer reaper** | `hub.go` `StartReaper` | One ticker for ping + stale eviction beats 50k per-conn timers |
 | **Atomic per-user seq** | `notifications.go` UPSERT on `user_offsets` | Concurrent inserts can't collide; replays are deterministic |
-| **Cross-node pub-sub** | `internal/adapter/redis` (rueidis) | Adding a second node = zero code change; rueidis auto-reconnects on drop |
+| **Per-user SUBSCRIBE** | Hub asks `internal/adapter/redis.Subscriber` on first/last conn per user; refcounted | Each node receives only the messages for users it actually holds — bandwidth scales linearly with local conns, not total fleet users |
 | **Sequence recovery** | `welcome` carries `current_seq`; client sends `resume { from_seq }` | No-message-loss across disconnects without server-side ack store |
 | **Exponential backoff + jitter** | `hooks/useWebSocket.ts` | Avoids thundering-herd reconnect after a server restart |
 | **JWT at handshake** | `auth/jwt.go` `Authenticate` reads `?token=` | Browsers can't set headers on WS upgrade — query param is the canonical workaround |
@@ -272,7 +272,7 @@ Open <http://localhost:16687> for the Jaeger UI and look for service `realtimehu
 - [x] Phase 8 · CI + this README
 - [x] Phase 9 · unit tests with gomock + testify (domain 100%, usecase 96%, auth 83%)
 - [x] Phase 10 · OpenTelemetry tracing end-to-end (HTTP → use case → Redis pub-sub → hub)
-- [ ] Phase 11 · per-user `SUBSCRIBE` (replace wildcard) for very large fleets
+- [x] Phase 11 · per-user `SUBSCRIBE` (replaced wildcard) — each node receives only its connected users' messages
 - [ ] Phase 12 · ack-based at-least-once delivery + delivery offsets table
 
 ---

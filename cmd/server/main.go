@@ -104,12 +104,19 @@ func run() error {
 	}
 	defer redisClient.Close()
 
-	// Every node both publishes and subscribes — even single-node deploys
-	// route through Redis, so multi-node deploys need no code changes.
+	// Every node both publishes and subscribes — single-node deploys
+	// route through Redis the same way multi-node deploys do, so the
+	// fan-out path is one code path.
+	//
+	// Phase 11: per-user SUBSCRIBE instead of PSUBSCRIBE wildcard. The
+	// Hub asks the subscriber to subscribe/unsubscribe as users connect
+	// and disconnect on this node, so each node only receives messages
+	// for users it actually holds connections for.
 	subscriber := redisadapter.NewSubscriber(redisClient, server.Hub(), logger)
 	if err := subscriber.Start(rootCtx); err != nil {
 		return fmt.Errorf("redis subscribe: %w", err)
 	}
+	server.Hub().SetTracker(subscriber)
 
 	// --- Use cases ---
 	publisher := redisadapter.NewPublisher(redisClient, logger)
