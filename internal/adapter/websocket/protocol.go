@@ -26,10 +26,15 @@ const (
 
 // Frame is the envelope on the wire. Payload is left as RawMessage so the
 // hub can route and replay without re-marshaling business data.
+//
+// TraceParent carries a W3C trace context across the Redis pub-sub hop —
+// publisher injects, subscriber extracts, and the trace stays linked
+// HTTP → use case → publish → subscribe → hub → client.
 type Frame struct {
-	Type    MsgType         `json:"type"`
-	Seq     int64           `json:"seq,omitempty"`
-	Payload json.RawMessage `json:"payload,omitempty"`
+	Type        MsgType         `json:"type"`
+	Seq         int64           `json:"seq,omitempty"`
+	TraceParent string          `json:"traceparent,omitempty"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
 }
 
 // WelcomePayload is sent right after a successful upgrade so the client

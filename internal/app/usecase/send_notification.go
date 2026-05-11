@@ -9,10 +9,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/liliksetyawan/realtimehub/internal/app/port"
 	"github.com/liliksetyawan/realtimehub/internal/domain"
 )
+
+var tracer = otel.Tracer("realtimehub/usecase")
 
 type SendNotification struct {
 	repo      port.NotificationRepository
@@ -46,11 +50,15 @@ type SentNotification struct {
 // The publisher call is best-effort — if a user has no live conn, the
 // row stays in postgres and they pick it up on next reconnect.
 func (uc *SendNotification) Execute(ctx context.Context, in SendNotificationInput) ([]SentNotification, error) {
+	ctx, span := tracer.Start(ctx, "usecase.SendNotification")
+	defer span.End()
+
 	in.Title = strings.TrimSpace(in.Title)
 	in.Body = strings.TrimSpace(in.Body)
 	if in.Title == "" || len(in.UserIDs) == 0 {
 		return nil, domain.ErrInvalidInput
 	}
+	span.SetAttributes(attribute.Int("recipients.count", len(in.UserIDs)))
 
 	out := make([]SentNotification, 0, len(in.UserIDs))
 	for _, uid := range in.UserIDs {
@@ -68,11 +76,12 @@ func (uc *SendNotification) Execute(ctx context.Context, in SendNotificationInpu
 		}
 		if err := uc.repo.Create(ctx, n); err != nil {
 			uc.log.Error().Err(err).Str("user_id", uid).Msg("persist failed")
+			span.RecordError(err)
 			return nil, err
 		}
 		// Best-effort fan-out. Persistence is the source of truth; if the
 		// user is offline, they catch up via SinceSeq on reconnect.
-		if err := uc.publisher.SendNotification(uid, n); err != nil {
+		if err := uc.publisher.SendNotification(ctx, uid, n); err != nil {
 			uc.log.Warn().Err(err).Str("user_id", uid).Msg("publish failed; will catch up on reconnect")
 		}
 		out = append(out, SentNotification{ID: n.ID, UserID: uid, Seq: n.Seq})

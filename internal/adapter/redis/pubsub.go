@@ -7,6 +7,11 @@
 // pattern so adding a new user requires no subscription change. For
 // extreme scale (millions of users) you'd switch to per-user SUBSCRIBE,
 // at the cost of a registration step on connect.
+//
+// Tracing: the publisher injects the active W3C trace context into
+// Frame.TraceParent before serializing; the subscriber extracts it and
+// continues the trace, so Jaeger sees one chain HTTP → use case →
+// publish → subscribe → hub.
 package redis
 
 import (
@@ -17,6 +22,10 @@ import (
 
 	"github.com/redis/rueidis"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/liliksetyawan/realtimehub/internal/adapter/websocket"
 	"github.com/liliksetyawan/realtimehub/internal/domain"
@@ -25,6 +34,8 @@ import (
 const channelPrefix = "notif:user:"
 
 func channelFor(userID string) string { return channelPrefix + userID }
+
+var tracer = otel.Tracer("realtimehub/redis")
 
 // Publisher implements port.Publisher by publishing to Redis. Every node
 // running the subscriber will then deliver the notification to its local
@@ -38,7 +49,19 @@ func NewPublisher(client rueidis.Client, log zerolog.Logger) *Publisher {
 	return &Publisher{client: client, log: log.With().Str("component", "redis-pub").Logger()}
 }
 
-func (p *Publisher) SendNotification(userID string, n *domain.Notification) error {
+func (p *Publisher) SendNotification(ctx context.Context, userID string, n *domain.Notification) error {
+	ctx, span := tracer.Start(ctx, "redis.publish",
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "redis"),
+			attribute.String("messaging.operation.name", "publish"),
+			attribute.String("messaging.destination.name", channelFor(userID)),
+			attribute.String("user_id", userID),
+			attribute.Int64("notification.seq", n.Seq),
+		),
+	)
+	defer span.End()
+
 	payload := websocket.NotificationPayload{
 		ID:        n.ID,
 		Title:     n.Title,
@@ -51,12 +74,20 @@ func (p *Publisher) SendNotification(userID string, n *domain.Notification) erro
 		Seq:     n.Seq,
 		Payload: mustMarshal(payload),
 	}
+	// Inject the current trace context into the frame so the subscriber
+	// (which may live on a different node) can continue the trace.
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	frame.TraceParent = carrier["traceparent"]
+
 	body, err := json.Marshal(frame)
 	if err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("marshal frame: %w", err)
 	}
 	cmd := p.client.B().Publish().Channel(channelFor(userID)).Message(string(body)).Build()
-	if err := p.client.Do(context.Background(), cmd).Error(); err != nil {
+	if err := p.client.Do(ctx, cmd).Error(); err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("redis publish: %w", err)
 	}
 	return nil
@@ -95,18 +126,7 @@ func (s *Subscriber) Start(ctx context.Context) error {
 			default:
 			}
 			err := s.client.Receive(ctx, s.client.B().Psubscribe().Pattern(pattern).Build(),
-				func(msg rueidis.PubSubMessage) {
-					userID := strings.TrimPrefix(msg.Channel, channelPrefix)
-					if userID == "" {
-						return
-					}
-					var frame websocket.Frame
-					if err := json.Unmarshal([]byte(msg.Message), &frame); err != nil {
-						s.log.Warn().Err(err).Msg("decode frame from redis")
-						return
-					}
-					s.hub.SendToUser(userID, frame)
-				})
+				func(msg rueidis.PubSubMessage) { s.handleMessage(ctx, msg) })
 			if err != nil && ctx.Err() == nil {
 				s.log.Warn().Err(err).Msg("subscriber dropped; rueidis will reconnect")
 			}
@@ -114,6 +134,40 @@ func (s *Subscriber) Start(ctx context.Context) error {
 	}()
 	s.log.Info().Str("pattern", pattern).Msg("redis subscriber started")
 	return nil
+}
+
+func (s *Subscriber) handleMessage(ctx context.Context, msg rueidis.PubSubMessage) {
+	userID := strings.TrimPrefix(msg.Channel, channelPrefix)
+	if userID == "" {
+		return
+	}
+	var frame websocket.Frame
+	if err := json.Unmarshal([]byte(msg.Message), &frame); err != nil {
+		s.log.Warn().Err(err).Msg("decode frame from redis")
+		return
+	}
+
+	// Extract the trace context from the frame and continue the trace.
+	carrier := propagation.MapCarrier{}
+	if frame.TraceParent != "" {
+		carrier["traceparent"] = frame.TraceParent
+	}
+	parentCtx := otel.GetTextMapPropagator().Extract(ctx, carrier)
+
+	_, span := tracer.Start(parentCtx, "redis.subscribe",
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "redis"),
+			attribute.String("messaging.operation.name", "deliver"),
+			attribute.String("messaging.destination.name", msg.Channel),
+			attribute.String("user_id", userID),
+			attribute.Int64("notification.seq", frame.Seq),
+		),
+	)
+	defer span.End()
+
+	delivered := s.hub.SendToUser(userID, frame)
+	span.SetAttributes(attribute.Int("hub.delivered", delivered))
 }
 
 func mustMarshal(v any) json.RawMessage {

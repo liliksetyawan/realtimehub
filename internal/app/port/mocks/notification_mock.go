@@ -155,15 +155,15 @@ func (m *MockPublisher) EXPECT() *MockPublisherMockRecorder {
 }
 
 // SendNotification mocks base method.
-func (m *MockPublisher) SendNotification(userID string, n *domain.Notification) error {
+func (m *MockPublisher) SendNotification(ctx context.Context, userID string, n *domain.Notification) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SendNotification", userID, n)
+	ret := m.ctrl.Call(m, "SendNotification", ctx, userID, n)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // SendNotification indicates an expected call of SendNotification.
-func (mr *MockPublisherMockRecorder) SendNotification(userID, n any) *gomock.Call {
+func (mr *MockPublisherMockRecorder) SendNotification(ctx, userID, n any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendNotification", reflect.TypeOf((*MockPublisher)(nil).SendNotification), userID, n)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendNotification", reflect.TypeOf((*MockPublisher)(nil).SendNotification), ctx, userID, n)
 }

@@ -37,8 +37,9 @@ type NotificationRepository interface {
 }
 
 // Publisher is the outbound port the SendNotification use case calls
-// after persisting. Implemented by the websocket Hub adapter (which may
-// also fan out to other nodes via Redis in Phase 4).
+// after persisting. Implemented by the Redis adapter, which serializes
+// + publishes — and injects the current OTel trace context so subscribing
+// nodes can continue the same trace across the Redis hop.
 type Publisher interface {
-	SendNotification(userID string, n *domain.Notification) error
+	SendNotification(ctx context.Context, userID string, n *domain.Notification) error
 }

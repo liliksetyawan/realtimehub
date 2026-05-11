@@ -38,8 +38,8 @@ func TestSendNotification_HappyPath(t *testing.T) {
 		})
 
 	pub.EXPECT().
-		SendNotification("u_alice", gomock.Any()).
-		DoAndReturn(func(_ string, n *domain.Notification) error {
+		SendNotification(gomock.Any(), "u_alice", gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, n *domain.Notification) error {
 			assert.Equal(t, int64(7), n.Seq, "publisher must see the seq the repo just assigned")
 			return nil
 		})
@@ -63,7 +63,7 @@ func TestSendNotification_MultipleRecipientsFanOut(t *testing.T) {
 			n.Seq = 1
 			return nil
 		})
-	pub.EXPECT().SendNotification(gomock.Any(), gomock.Any()).Times(3).Return(nil)
+	pub.EXPECT().SendNotification(gomock.Any(), gomock.Any(), gomock.Any()).Times(3).Return(nil)
 
 	out, err := uc.Execute(context.Background(), usecase.SendNotificationInput{
 		UserIDs: []string{"u_alice", "u_bob", "u_charlie"},
@@ -81,7 +81,7 @@ func TestSendNotification_PublishFailureIsBestEffort(t *testing.T) {
 			n.Seq = 1
 			return nil
 		})
-	pub.EXPECT().SendNotification(gomock.Any(), gomock.Any()).
+	pub.EXPECT().SendNotification(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.New("redis down"))
 
 	out, err := uc.Execute(context.Background(), usecase.SendNotificationInput{
@@ -120,7 +120,7 @@ func TestSendNotification_TrimsWhitespaceFromUserIDs(t *testing.T) {
 			n.Seq = 1
 			return nil
 		})
-	pub.EXPECT().SendNotification("u_alice", gomock.Any()).Return(nil)
+	pub.EXPECT().SendNotification(gomock.Any(), "u_alice", gomock.Any()).Return(nil)
 
 	out, err := uc.Execute(context.Background(), usecase.SendNotificationInput{
 		UserIDs: []string{"", "  ", "u_alice"}, // only u_alice is valid after trim
