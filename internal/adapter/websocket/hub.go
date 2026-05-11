@@ -10,6 +10,18 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// SubscriptionTracker is the optional hook the Hub calls when a user
+// gains its first connection on this node (Subscribe) and loses its
+// last (Unsubscribe). Implemented by internal/adapter/redis.Subscriber
+// so each node subscribes only to the channels it actually needs.
+//
+// Defined here (not in app/port) because it's a local hub mechanism,
+// not an application-level contract.
+type SubscriptionTracker interface {
+	Subscribe(ctx context.Context, userID string) error
+	Unsubscribe(ctx context.Context, userID string) error
+}
+
 // Hub holds every live connection grouped by user id. It is sharded
 // (default 16) so registers / unregisters / broadcasts on different users
 // don't contend for one big mutex — at 50k conns this matters.
@@ -23,6 +35,9 @@ type Hub struct {
 
 	pingInterval time.Duration
 	pongTimeout  time.Duration
+
+	trackerMu sync.RWMutex
+	tracker   SubscriptionTracker
 
 	// metrics
 	connCount atomic.Int64
@@ -72,12 +87,31 @@ func (h *Hub) shardOf(userID string) *hubShard {
 	return h.shards[hh.Sum32()%h.shardCount]
 }
 
+// SetTracker wires an optional subscription tracker (typically the
+// Redis Subscriber). Hub calls Subscribe / Unsubscribe on it the first /
+// last time a user has a connection on this node. Safe to call after
+// Hub creation; tests construct the Hub without a tracker.
+func (h *Hub) SetTracker(t SubscriptionTracker) {
+	h.trackerMu.Lock()
+	h.tracker = t
+	h.trackerMu.Unlock()
+}
+
+func (h *Hub) currentTracker() SubscriptionTracker {
+	h.trackerMu.RLock()
+	defer h.trackerMu.RUnlock()
+	return h.tracker
+}
+
 // Register adds a connection to the hub. Multiple connections per user
-// are supported (think laptop + phone open at the same time).
+// are supported (think laptop + phone open at the same time). The first
+// conn for a given user triggers tracker.Subscribe; subsequent conns
+// on the same user reuse the existing Redis subscription.
 func (h *Hub) Register(c *Connection) {
 	s := h.shardOf(c.UserID)
 	s.mu.Lock()
 	set, ok := s.connections[c.UserID]
+	firstForUser := !ok || len(set) == 0
 	if !ok {
 		set = make(map[*Connection]struct{})
 		s.connections[c.UserID] = set
@@ -88,10 +122,23 @@ func (h *Hub) Register(c *Connection) {
 	h.connCount.Add(1)
 	h.log.Debug().Str("user_id", c.UserID).Str("conn_id", c.ID).
 		Int64("total", h.connCount.Load()).Msg("registered")
+
+	if firstForUser {
+		if t := h.currentTracker(); t != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := t.Subscribe(ctx, c.UserID); err != nil {
+				h.log.Warn().Err(err).Str("user_id", c.UserID).Msg("tracker subscribe failed")
+			}
+			cancel()
+		}
+	}
 }
 
-// Unregister removes a connection. Safe to call multiple times.
+// Unregister removes a connection. Safe to call multiple times. When
+// the last conn for a user goes away the tracker is asked to
+// Unsubscribe so this node stops receiving its Redis messages.
 func (h *Hub) Unregister(c *Connection) {
+	lastForUser := false
 	s := h.shardOf(c.UserID)
 	s.mu.Lock()
 	if set, ok := s.connections[c.UserID]; ok {
@@ -99,11 +146,22 @@ func (h *Hub) Unregister(c *Connection) {
 			delete(set, c)
 			if len(set) == 0 {
 				delete(s.connections, c.UserID)
+				lastForUser = true
 			}
 			h.connCount.Add(-1)
 		}
 	}
 	s.mu.Unlock()
+
+	if lastForUser {
+		if t := h.currentTracker(); t != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := t.Unsubscribe(ctx, c.UserID); err != nil {
+				h.log.Warn().Err(err).Str("user_id", c.UserID).Msg("tracker unsubscribe failed")
+			}
+			cancel()
+		}
+	}
 }
 
 // SendToUser fans `frame` out to every connection of `userID`. Returns
