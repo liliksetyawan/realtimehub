@@ -24,6 +24,14 @@ func (h *HistoryAdapter) CurrentSeq(ctx context.Context, userID string) (int64, 
 	return h.repo.CurrentSeq(ctx, userID)
 }
 
+func (h *HistoryAdapter) AckedSeq(ctx context.Context, userID string) (int64, error) {
+	return h.repo.AckedSeq(ctx, userID)
+}
+
+func (h *HistoryAdapter) RecordAck(ctx context.Context, userID string, upToSeq int64) error {
+	return h.repo.RecordAck(ctx, userID, upToSeq)
+}
+
 func (h *HistoryAdapter) SinceSeq(ctx context.Context, userID string, fromSeq int64, limit int) ([]*wsadapter.Replayable, error) {
 	rows, err := h.repo.SinceSeq(ctx, userID, fromSeq, limit)
 	if err != nil {

@@ -142,6 +142,37 @@ func (r *NotificationRepo) CurrentSeq(ctx context.Context, userID string) (int64
 	return seq, err
 }
 
+// RecordAck upserts delivery_offsets with GREATEST() so an out-of-order
+// ack frame (older seq arriving after a newer one) can't lower the
+// recorded offset. Idempotent.
+func (r *NotificationRepo) RecordAck(ctx context.Context, userID string, upToSeq int64) error {
+	if upToSeq <= 0 {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO delivery_offsets (user_id, last_acked_seq, updated_at)
+		VALUES ($1, $2, now())
+		ON CONFLICT (user_id) DO UPDATE
+		   SET last_acked_seq = GREATEST(delivery_offsets.last_acked_seq, EXCLUDED.last_acked_seq),
+		       updated_at = now()
+	`, userID, upToSeq)
+	return err
+}
+
+// AckedSeq returns the highest seq the client has confirmed receiving.
+// Zero on a brand-new user (no row yet) — caller treats that as "no
+// server-side knowledge, trust the client's resume cursor".
+func (r *NotificationRepo) AckedSeq(ctx context.Context, userID string) (int64, error) {
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(last_acked_seq, 0) FROM delivery_offsets WHERE user_id = $1
+	`, userID).Scan(&seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	return seq, err
+}
+
 func (r *NotificationRepo) UnreadCount(ctx context.Context, userID string) (int, error) {
 	var n int
 	err := r.pool.QueryRow(ctx, `

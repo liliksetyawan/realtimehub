@@ -41,6 +41,21 @@ func (m *MockNotificationRepository) EXPECT() *MockNotificationRepositoryMockRec
 	return m.recorder
 }
 
+// AckedSeq mocks base method.
+func (m *MockNotificationRepository) AckedSeq(ctx context.Context, userID string) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AckedSeq", ctx, userID)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AckedSeq indicates an expected call of AckedSeq.
+func (mr *MockNotificationRepositoryMockRecorder) AckedSeq(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AckedSeq", reflect.TypeOf((*MockNotificationRepository)(nil).AckedSeq), ctx, userID)
+}
+
 // Create mocks base method.
 func (m *MockNotificationRepository) Create(ctx context.Context, n *domain.Notification) error {
 	m.ctrl.T.Helper()
@@ -98,6 +113,20 @@ func (m *MockNotificationRepository) MarkRead(ctx context.Context, userID, notif
 func (mr *MockNotificationRepositoryMockRecorder) MarkRead(ctx, userID, notificationID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkRead", reflect.TypeOf((*MockNotificationRepository)(nil).MarkRead), ctx, userID, notificationID)
+}
+
+// RecordAck mocks base method.
+func (m *MockNotificationRepository) RecordAck(ctx context.Context, userID string, upToSeq int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecordAck", ctx, userID, upToSeq)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RecordAck indicates an expected call of RecordAck.
+func (mr *MockNotificationRepositoryMockRecorder) RecordAck(ctx, userID, upToSeq any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordAck", reflect.TypeOf((*MockNotificationRepository)(nil).RecordAck), ctx, userID, upToSeq)
 }
 
 // SinceSeq mocks base method.

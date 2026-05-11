@@ -34,6 +34,15 @@ type NotificationRepository interface {
 
 	// UnreadCount returns count of unread notifications for a user.
 	UnreadCount(ctx context.Context, userID string) (int, error)
+
+	// RecordAck stores that the client has rendered notifications up to
+	// upToSeq. Idempotent and monotonic — re-applying an older ack does
+	// not lower the recorded offset (UPSERT with GREATEST).
+	RecordAck(ctx context.Context, userID string, upToSeq int64) error
+
+	// AckedSeq returns the last seq the client has acknowledged. Used by
+	// the WS server as a server-authoritative resume cursor on reconnect.
+	AckedSeq(ctx context.Context, userID string) (int64, error)
 }
 
 // Publisher is the outbound port the SendNotification use case calls
