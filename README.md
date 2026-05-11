@@ -240,6 +240,25 @@ The scenario ramps 0 → 5k (30s) → 25k (1m) → 50k (2m), sustains 50k for 5 
 
 ---
 
+## Tracing
+
+OpenTelemetry tracing covers the full notification fan-out path:
+
+```
+HTTP request                  ← otelhttp middleware (root span)
+  └─ usecase.SendNotification ← span around Execute
+       └─ redis.publish       ← injects W3C `traceparent` into Frame
+              ↓ via Redis ↓
+            redis.subscribe   ← extracts `traceparent`, child span
+              └─ hub.send_to_user ← attributes: user_id, hub.delivered
+```
+
+Enable export by setting `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4319` (the Jaeger container's OTLP HTTP port). The endpoint is empty by default — when unset, the tracer is a no-op and the server runs with zero overhead.
+
+Open <http://localhost:16687> for the Jaeger UI and look for service `realtimehub`. A single admin notification produces one trace with five spans linked across the Redis hop via the W3C trace context header carried in `Frame.TraceParent`.
+
+---
+
 ## Roadmap
 
 - [x] Phase 0 · scaffold
@@ -251,8 +270,8 @@ The scenario ramps 0 → 5k (30s) → 25k (1m) → 50k (2m), sustains 50k for 5 
 - [x] Phase 6 · React SPA (login, dashboard, admin)
 - [x] Phase 7 · k6 ramp-to-50k + kernel tuning script
 - [x] Phase 8 · CI + this README
-- [ ] Phase 9 · unit tests with gomock + testify (≥80% coverage target)
-- [ ] Phase 10 · OpenTelemetry tracing across handshake → publish → fan-out
+- [x] Phase 9 · unit tests with gomock + testify (domain 100%, usecase 96%, auth 83%)
+- [x] Phase 10 · OpenTelemetry tracing end-to-end (HTTP → use case → Redis pub-sub → hub)
 - [ ] Phase 11 · per-user `SUBSCRIBE` (replace wildcard) for very large fleets
 - [ ] Phase 12 · ack-based at-least-once delivery + delivery offsets table
 
