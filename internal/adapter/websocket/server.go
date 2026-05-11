@@ -42,7 +42,9 @@ type Authenticator interface {
 // interface so the websocket package keeps a narrow surface.
 type History interface {
 	CurrentSeq(ctx context.Context, userID string) (int64, error)
+	AckedSeq(ctx context.Context, userID string) (int64, error)
 	SinceSeq(ctx context.Context, userID string, fromSeq int64, limit int) ([]*Replayable, error)
+	RecordAck(ctx context.Context, userID string, upToSeq int64) error
 }
 
 // Replayable is a transport-shaped DTO instead of *domain.Notification
@@ -182,15 +184,18 @@ func (s *Server) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 	conn.startWriter()
 	s.hub.Register(conn)
 
-	// Look up the user's current seq so the client can decide whether
-	// it has missed notifications. Best-effort — if the lookup fails we
-	// still let the connection in with seq=0 and the client just won't
+	// Look up the user's current seq + server-confirmed acked seq so the
+	// client can decide whether it has missed notifications. Best-effort —
+	// failed lookups fall through with 0s and the client just doesn't
 	// resume on this attempt.
-	currentSeq := int64(0)
+	currentSeq, ackedSeq := int64(0), int64(0)
 	if s.history != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		if seq, err := s.history.CurrentSeq(ctx, userID); err == nil {
 			currentSeq = seq
+		}
+		if seq, err := s.history.AckedSeq(ctx, userID); err == nil {
+			ackedSeq = seq
 		}
 		cancel()
 	}
@@ -201,6 +206,7 @@ func (s *Server) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 			UserID:     userID,
 			ConnID:     connID,
 			CurrentSeq: currentSeq,
+			AckedSeq:   ackedSeq,
 			ServerTime: time.Now().UTC(),
 		}),
 	})
@@ -222,8 +228,7 @@ func (s *Server) handleMessage(c *Connection, data []byte) {
 	case MsgPong:
 		c.MarkPong()
 	case MsgAck:
-		// We don't currently use ack for delivery — the client marks-read
-		// via REST. Reserved for future at-most-once delivery semantics.
+		s.handleAck(c, f.Payload)
 	case MsgResume:
 		s.handleResume(c, f.Payload)
 	default:
@@ -231,10 +236,36 @@ func (s *Server) handleMessage(c *Connection, data []byte) {
 	}
 }
 
-// handleResume replays every notification with seq > FromSeq for this
-// connection's user, in seq-ascending order. Bounded to 200 per call —
-// a client that's been offline for a week can keep asking until it
-// catches up.
+// handleAck persists the client's claim that it has rendered notifications
+// up to UpToSeq, into the delivery_offsets table. Idempotent / monotonic
+// at the repo layer, so out-of-order or duplicate acks are harmless.
+func (s *Server) handleAck(c *Connection, raw json.RawMessage) {
+	if s.history == nil {
+		return
+	}
+	var p AckPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		c.log.Debug().Err(err).Msg("bad ack payload")
+		return
+	}
+	if p.UpToSeq <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := s.history.RecordAck(ctx, c.UserID, p.UpToSeq); err != nil {
+		c.log.Warn().Err(err).Int64("up_to_seq", p.UpToSeq).Msg("record ack")
+	}
+}
+
+// handleResume replays every notification with seq > resumeFrom for this
+// connection's user, in seq-ascending order. resumeFrom is MAX(client's
+// FromSeq, server's AckedSeq) — server-authoritative if the client
+// claims less than it has truly acked, client-authoritative if the
+// client has moved ahead.
+//
+// Bounded to 200 per call; a client that's been offline for a week can
+// keep asking with a higher from_seq until it catches up.
 func (s *Server) handleResume(c *Connection, raw json.RawMessage) {
 	if s.history == nil {
 		return
@@ -246,7 +277,13 @@ func (s *Server) handleResume(c *Connection, raw json.RawMessage) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	missed, err := s.history.SinceSeq(ctx, c.UserID, p.FromSeq, 200)
+
+	resumeFrom := p.FromSeq
+	if acked, err := s.history.AckedSeq(ctx, c.UserID); err == nil && acked > resumeFrom {
+		resumeFrom = acked
+	}
+
+	missed, err := s.history.SinceSeq(ctx, c.UserID, resumeFrom, 200)
 	if err != nil {
 		c.log.Warn().Err(err).Msg("resume fetch failed")
 		return
@@ -264,7 +301,10 @@ func (s *Server) handleResume(c *Connection, raw json.RawMessage) {
 			}),
 		})
 	}
-	c.log.Info().Int64("from_seq", p.FromSeq).Int("replayed", len(missed)).Msg("resume served")
+	c.log.Info().
+		Int64("from_seq", p.FromSeq).
+		Int64("resume_from", resumeFrom).
+		Int("replayed", len(missed)).Msg("resume served")
 }
 
 func mustMarshal(v any) json.RawMessage {

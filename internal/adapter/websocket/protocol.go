@@ -37,13 +37,19 @@ type Frame struct {
 	Payload     json.RawMessage `json:"payload,omitempty"`
 }
 
-// WelcomePayload is sent right after a successful upgrade so the client
-// knows its identity and the highest seq the server has on file. The
-// client uses CurrentSeq to decide whether it needs to resume.
+// WelcomePayload is sent right after a successful upgrade. It carries:
+//
+//   - CurrentSeq: the highest seq this user has on file in postgres
+//   - AckedSeq:   the highest seq the *server* has confirmed delivered
+//     (from the delivery_offsets table)
+//
+// The client compares these against its own last-seen seq and decides
+// whether to send a `resume` frame. Unread badge = CurrentSeq - max(AckedSeq, localLastSeen).
 type WelcomePayload struct {
 	UserID     string    `json:"user_id"`
 	ConnID     string    `json:"conn_id"`
 	CurrentSeq int64     `json:"current_seq"`
+	AckedSeq   int64     `json:"acked_seq"`
 	ServerTime time.Time `json:"server_time"`
 }
 
