@@ -26,6 +26,7 @@ import (
 	wsadapter "github.com/liliksetyawan/realtimehub/internal/adapter/websocket"
 	"github.com/liliksetyawan/realtimehub/internal/app/usecase"
 	"github.com/liliksetyawan/realtimehub/internal/config"
+	"github.com/liliksetyawan/realtimehub/internal/observability"
 	"github.com/liliksetyawan/realtimehub/migrations"
 )
 
@@ -49,6 +50,20 @@ func run() error {
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// --- Tracing ---
+	shutdownTracing, err := observability.InitTracing(rootCtx, "realtimehub", cfg.OTLPEndpoint)
+	if err != nil {
+		return fmt.Errorf("init tracing: %w", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(ctx)
+	}()
+	if cfg.OTLPEndpoint != "" {
+		logger.Info().Str("endpoint", cfg.OTLPEndpoint).Msg("tracing enabled")
+	}
 
 	// --- Postgres + migrations ---
 	pool, err := postgres.Connect(rootCtx, postgres.Config{

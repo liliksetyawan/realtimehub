@@ -11,6 +11,7 @@ import (
 	"github.com/lesismal/nbio/nbhttp"
 	"github.com/lesismal/nbio/nbhttp/websocket"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Server wires nbio's epoll engine to our Hub. Construct via NewServer,
@@ -91,11 +92,21 @@ func NewServer(cfg ServerConfig, auth Authenticator, history History, log zerolo
 		})
 	})
 
+	// Wrap the mux with otelhttp so every REST request becomes a root
+	// span and the WS upgrade carries `traceparent` through to handleUpgrade.
+	// Per-route span names come from the route formatter — gives Jaeger
+	// "POST /v1/admin/notifications" instead of just "HTTP POST".
+	instrumented := otelhttp.NewHandler(mux, "realtimehub",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method + " " + r.URL.Path
+		}),
+	)
+
 	s.eng = nbhttp.NewEngine(nbhttp.Config{
 		Network:        "tcp",
 		Addrs:          []string{cfg.Addr},
 		MaxLoad:        1_000_000,
-		Handler:        mux,
+		Handler:        instrumented,
 		ReadBufferSize: 4096,
 		ReadLimit:      1 << 20, // 1 MiB max frame
 	})
