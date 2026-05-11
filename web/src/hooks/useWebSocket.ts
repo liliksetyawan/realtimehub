@@ -92,6 +92,12 @@ export function useWebSocket() {
               }),
             );
             toast(p.title, { description: p.body });
+            // Confirm receipt so the server's delivery_offsets table
+            // reflects what this client has rendered. The server is
+            // monotonic — out-of-order acks don't lower the offset.
+            if (frame.seq && frame.seq > 0) {
+              send({ type: "ack", payload: { up_to_seq: frame.seq } });
+            }
             break;
           }
           case "server_ping":

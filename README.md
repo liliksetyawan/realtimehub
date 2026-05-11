@@ -104,7 +104,8 @@ sequenceDiagram
 | **One-timer reaper** | `hub.go` `StartReaper` | One ticker for ping + stale eviction beats 50k per-conn timers |
 | **Atomic per-user seq** | `notifications.go` UPSERT on `user_offsets` | Concurrent inserts can't collide; replays are deterministic |
 | **Per-user SUBSCRIBE** | Hub asks `internal/adapter/redis.Subscriber` on first/last conn per user; refcounted | Each node receives only the messages for users it actually holds — bandwidth scales linearly with local conns, not total fleet users |
-| **Sequence recovery** | `welcome` carries `current_seq`; client sends `resume { from_seq }` | No-message-loss across disconnects without server-side ack store |
+| **Sequence recovery** | `welcome` carries `current_seq`; client sends `resume { from_seq }` | No-message-loss across disconnects |
+| **Server-authoritative delivery offsets** | Client sends `{type:ack, up_to_seq:N}` after rendering; server UPSERTs `delivery_offsets` with `GREATEST(...)`; resume replays from `MAX(client.from_seq, server.acked_seq)` | At-least-once render guarantee — survives client lying about its seq, localStorage wipes, browser crashes mid-render |
 | **Exponential backoff + jitter** | `hooks/useWebSocket.ts` | Avoids thundering-herd reconnect after a server restart |
 | **JWT at handshake** | `auth/jwt.go` `Authenticate` reads `?token=` | Browsers can't set headers on WS upgrade — query param is the canonical workaround |
 | **Hexagonal layout** | `domain` → `port` → `usecase` → `adapter` | Same shape as OrderFlow; easy to swap the publisher (e.g. NATS instead of Redis) |
@@ -273,7 +274,7 @@ Open <http://localhost:16687> for the Jaeger UI and look for service `realtimehu
 - [x] Phase 9 · unit tests with gomock + testify (domain 100%, usecase 96%, auth 83%)
 - [x] Phase 10 · OpenTelemetry tracing end-to-end (HTTP → use case → Redis pub-sub → hub)
 - [x] Phase 11 · per-user `SUBSCRIBE` (replaced wildcard) — each node receives only its connected users' messages
-- [ ] Phase 12 · ack-based at-least-once delivery + delivery offsets table
+- [x] Phase 12 · ack-based at-least-once delivery + `delivery_offsets` table (server-authoritative resume cursor)
 
 ---
 

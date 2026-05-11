@@ -50,6 +50,7 @@ export interface WelcomePayload {
   user_id: string;
   conn_id: string;
   current_seq: number;
+  acked_seq: number;
   server_time: string;
 }
 
@@ -59,4 +60,8 @@ export interface NotificationPayload {
   body: string;
   data?: Record<string, string>;
   created_at: string;
+}
+
+export interface AckPayload {
+  up_to_seq: number;
 }
